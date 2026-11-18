@@ -432,8 +432,9 @@
 
 /* ====================== CONFIG ====================== */
 const CONFIG = {
-  API_URL: '',                  // để rỗng lúc build — điền URL Apps Script (…/exec) SAU KHI deploy xong
-  LOCAL_USERS: [],               // luôn để rỗng — tài khoản chỉ sống trong Code.gs, không bao giờ trong trang này
+  API_URL: 'https://wowhsxnzfetirqpbqxka.supabase.co/rest/v1/rpc/rt_api',                  // để rỗng lúc build — Apps Script: URL …/exec · Supabase: https://<ref>.supabase.co/rest/v1/rpc/rt_api
+  SB_KEY: 'sb_publishable_B2Jpfm0-Z7C-RBrnYa_OuA_DwD-n4yk',                   // Supabase: publishable (anon) key — khi có, API_URL = https://<ref>.supabase.co/rest/v1/rpc/rt_api (khoá công khai, không phải mật khẩu)
+  LOCAL_USERS: [],               // luôn để rỗng — tài khoản chỉ sống ở máy chủ (Code.gs hoặc bảng rt_staff), không bao giờ trong trang này
   DURATION_MIN: 45,              // phút làm bài
   PASS_MARK: 5.0,                // ngưỡng "đạt" trên dashboard (thang 10)
   KEY: 'life-pre-hp4-practice-test-1'                 // namespace localStorage — PHẢI duy nhất cho bài này (dùng luôn làm slug CSV)
@@ -1441,14 +1442,18 @@ async function api(action, payload) {
   payload = payload || {};
   if (!CONFIG.API_URL) return localApi(action, payload);
   const auth = A ? { user: A.name, password: A.password } : {};
+  // Supabase (1.1.0): mọi tác vụ đi qua 1 hàm Postgres rt_api(p jsonb), trả đúng dạng JSON như Code.gs.
+  const call = CONFIG.SB_KEY
+    ? (body, ms) => fetchJson(CONFIG.API_URL, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json', apikey: CONFIG.SB_KEY }, /^eyJ/.test(CONFIG.SB_KEY) ? { Authorization: 'Bearer ' + CONFIG.SB_KEY } : {}), body: JSON.stringify({ p: Object.assign({ key: CONFIG.KEY }, body) }) }, ms)
+    : null;
   if (action === 'list' || action === 'settings') {
     // Cả lớp mở trang/Class report cùng giây: Apps Script chạy tối đa ~30 lượt (quá thì Google trả trang HTML, không phải JSON)
     // và Sheet báo "too many simultaneous invocations" (Code.gs trả ok:false). Tự đọc lại tối đa 3 lần, giãn cách ngẫu nhiên
     // tăng dần (load test 110 HV, 22/10/2026).
     for (let t = 0; ; t++) {
       try {
-        const j = await fetchJson(CONFIG.API_URL + '?action=' + action + '&_=' + Date.now(), { redirect: 'follow' }, 15000);
-        if (j.ok === false && t < 5) throw new Error(j.error || 'busy');
+        const j = call ? await call({ action }, 15000) : await fetchJson(CONFIG.API_URL + '?action=' + action + '&_=' + Date.now(), { redirect: 'follow' }, 15000);
+        if (j.ok !== true && t < 5) throw new Error(j.error || j.message || 'busy');   // Supabase/PostgREST errors have no ok field
         return j;
       } catch (e) {
         if (t >= 5) throw e;
@@ -1456,6 +1461,7 @@ async function api(action, payload) {
       }
     }
   }
+  if (call) return call(Object.assign({ action }, payload, auth), 40000);
   return fetchJson(CONFIG.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action }, payload, auth)), redirect: 'follow' }, 40000);
 }
 function localApi(action, p) {
